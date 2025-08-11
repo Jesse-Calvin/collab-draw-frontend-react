@@ -54,7 +54,7 @@ function App() {
   };
 
   useEffect(() => {
-    socketRef.current = new WebSocket("ws://localhost:8000/ws");
+    socketRef.current = new WebSocket("wss://web-production-0f84.up.railway.app/ws");
 
     socketRef.current.onopen = () => {
       console.log("Connected to WebSocket backend");
