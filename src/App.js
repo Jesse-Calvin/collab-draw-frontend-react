@@ -1,6 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback } from "react";
-
-const ASPECT_RATIO = 4 / 3;
+import React, { useRef, useState, useEffect } from "react";
 
 function App() {
   const canvasRef = useRef(null);
@@ -12,30 +10,12 @@ function App() {
   const [currentStroke, setCurrentStroke] = useState([]);
   const strokesRef = useRef([]);
 
-  // Draw a stroke (array of points) on canvas context
-  const drawLine = (ctx, stroke) => {
-    if (stroke.length < 2) return;
-    ctx.beginPath();
-    ctx.strokeStyle = stroke[0].color;
-    ctx.lineWidth = 3;
-    ctx.lineCap = "round";
-    ctx.moveTo(stroke[0].x, stroke[0].y);
-    for (let i = 1; i < stroke.length; i++) {
-      ctx.lineTo(stroke[i].x, stroke[i].y);
-    }
-    ctx.stroke();
-  };
+  // Aspect ratio 4:3 (width / height)
+  const ASPECT_RATIO = 4 / 3;
 
-  // Redraw all strokes — wrapped in useCallback for stable reference
-  const redrawAll = useCallback((ctx) => {
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    for (const stroke of strokesRef.current) {
-      drawLine(ctx, stroke);
-    }
-  }, []);
-
-  // Resize canvas function — wrapped in useCallback, depends on redrawAll
-  const resizeCanvas = useCallback(() => {
+  // Resize canvas function: fits container width or window width (mobile),
+  // sets actual canvas pixels and CSS pixels to match (accounting for devicePixelRatio)
+  const resizeCanvas = () => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas) return;
@@ -60,11 +40,54 @@ function App() {
     ctx.scale(dpr, dpr);
 
     redrawAll(ctx);
-  }, [redrawAll]);
+  };
+
+  // Convert pointer event coords to canvas coords, scaled to canvas size & DPR
+  const getPos = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+
+    return {
+      x: (e.clientX - rect.left) * dpr,
+      y: (e.clientY - rect.top) * dpr,
+    };
+  };
+
+  // Draw a stroke (array of points) on canvas context
+  const drawLine = (ctx, stroke) => {
+    if (stroke.length < 2) return;
+    ctx.beginPath();
+    ctx.strokeStyle = stroke[0].color;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.moveTo(stroke[0].x, stroke[0].y);
+    for (let i = 1; i < stroke.length; i++) {
+      ctx.lineTo(stroke[i].x, stroke[i].y);
+    }
+    ctx.stroke();
+  };
+
+  // Redraw all strokes
+  const redrawAll = (ctx) => {
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    for (const stroke of strokesRef.current) {
+      drawLine(ctx, stroke);
+    }
+  };
+
+  // Send message via WebSocket if open
+  const sendMessage = (msg) => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify(msg));
+    }
+  };
 
   // Setup WebSocket connection and event handlers
   useEffect(() => {
-    socketRef.current = new WebSocket("wss://web-production-0f84.up.railway.app/ws");
+    socketRef.current = new WebSocket(
+      "wss://web-production-0f84.up.railway.app/ws"
+    );
 
     socketRef.current.onopen = () => {
       console.log("Connected to WebSocket backend");
@@ -122,34 +145,14 @@ function App() {
     return () => {
       socketRef.current.close();
     };
-  }, [redrawAll]);
+  }, []);
 
-  // Resize canvas on mount and window resize
+  // Resize canvas on mount and on window resize
   useEffect(() => {
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
     return () => window.removeEventListener("resize", resizeCanvas);
-  }, [resizeCanvas]);
-
-  // Convert mouse/touch event coords to canvas coords, scaled to canvas size
-  const getPos = (e) => {
-    const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    let clientX, clientY;
-
-    if (e.touches) {
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
-    } else {
-      clientX = e.clientX;
-      clientY = e.clientY;
-    }
-
-    return {
-      x: (clientX - rect.left) * (canvas.width / rect.width),
-      y: (clientY - rect.top) * (canvas.height / rect.height),
-    };
-  };
+  }, []);
 
   // Handle drawing start
   const handlePointerDown = (e) => {
@@ -193,13 +196,6 @@ function App() {
     setCurrentStroke([]);
   };
 
-  // Send message via WebSocket if open
-  const sendMessage = (msg) => {
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify(msg));
-    }
-  };
-
   // Undo last stroke
   const handleUndo = () => {
     strokesRef.current.pop();
@@ -216,8 +212,7 @@ function App() {
     sendMessage({ type: "clear" });
   };
 
-  // Styles and UI code remain unchanged...
-
+  // Styles
   const styles = {
     container: {
       minHeight: "100vh",
@@ -230,6 +225,8 @@ function App() {
       color: "#fff",
       padding: "10px",
       boxSizing: "border-box",
+      maxWidth: "100vw",
+      overflowX: "hidden",
     },
     card: {
       backgroundColor: "#2c2f4a",
@@ -239,6 +236,7 @@ function App() {
       width: "100%",
       maxWidth: "850px",
       boxSizing: "border-box",
+      overflowX: "hidden",
     },
     heading: {
       marginBottom: "15px",
@@ -291,7 +289,9 @@ function App() {
       margin: "0 auto",
       backgroundColor: "#fff",
       touchAction: "none",
-      // width and height set dynamically in JS, no fixed sizes here
+      maxWidth: "100%",
+      height: "auto",
+      overflowX: "hidden",
     },
   };
 
@@ -335,13 +335,10 @@ function App() {
         <canvas
           ref={canvasRef}
           style={styles.canvas}
-          onMouseDown={handlePointerDown}
-          onMouseMove={handlePointerMove}
-          onMouseUp={endDrawing}
-          onMouseLeave={endDrawing}
-          onTouchStart={handlePointerDown}
-          onTouchMove={handlePointerMove}
-          onTouchEnd={endDrawing}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={endDrawing}
+          onPointerCancel={endDrawing}
         />
       </div>
     </div>
