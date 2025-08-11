@@ -101,7 +101,7 @@ function App() {
 
   // Setup WebSocket connection and event handlers
   useEffect(() => {
-    socketRef.current = new WebSocket("ws://web-production-0f84.up.railway.app/ws");
+    socketRef.current = new WebSocket("wss://web-production-0f84.up.railway.app/ws");
 
     socketRef.current.onopen = () => {
       console.log("Connected to WebSocket backend");
@@ -309,7 +309,7 @@ function App() {
   return (
     <div style={styles.container} ref={containerRef}>
       <div style={styles.card}>
-        <h2 style={styles.heading}>Collaborative Drawing</h2>
+        <h2 style={styles.heading}>Collaborative Drawing Lap</h2>
         <div style={styles.controls}>
           <input
             type="color"
