@@ -13,38 +13,15 @@ function App() {
   // Aspect ratio 4:3 (width / height)
   const ASPECT_RATIO = 4 / 3;
 
-  // Draw a stroke (array of points) on canvas context
-  const drawLine = (ctx, stroke) => {
-    if (stroke.length < 2) return;
-    ctx.beginPath();
-    ctx.strokeStyle = stroke[0].color;
-    ctx.lineWidth = 3;
-    ctx.lineCap = "round";
-    ctx.moveTo(stroke[0].x, stroke[0].y);
-    for (let i = 1; i < stroke.length; i++) {
-      ctx.lineTo(stroke[i].x, stroke[i].y);
-    }
-    ctx.stroke();
-  };
-
-  // Wrap redrawAll with useCallback to fix eslint deps
-  const redrawAll = useCallback((ctx) => {
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    for (const stroke of strokesRef.current) {
-      drawLine(ctx, stroke);
-    }
-  }, []);
-
-  // Wrap resizeCanvas with useCallback and include redrawAll as dep
+  // Resize canvas function: fits container width or window width (mobile),
+  // sets actual canvas pixels and CSS pixels to match (accounting for devicePixelRatio)
   const resizeCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas) return;
 
     // Use container width if available; fallback to window width for mobiles
-    const containerWidth = container
-      ? container.clientWidth
-      : window.innerWidth;
+    const containerWidth = container ? container.clientWidth : window.innerWidth;
 
     // Calculate height keeping aspect ratio
     const newWidth = containerWidth;
@@ -68,12 +45,13 @@ function App() {
 
     // Redraw all strokes scaled properly
     redrawAll(ctx);
-  }, [redrawAll, ASPECT_RATIO]);
+  }, [ASPECT_RATIO]);
 
-  // Convert mouse/touch event coords to canvas coords, scaled to canvas size
+  // Convert mouse/touch event coords to canvas coords, scaled to canvas size & devicePixelRatio
   const getPos = (e) => {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
+
     let clientX, clientY;
 
     if (e.touches) {
@@ -84,12 +62,41 @@ function App() {
       clientY = e.clientY;
     }
 
-    // Scale to canvas drawing buffer size
+    // Note: rect.width and rect.height are CSS pixels,
+    // canvas.width and canvas.height are device pixels (scaled by dpr)
+    // We want coords relative to canvas pixel space.
+    const dpr = window.devicePixelRatio || 1;
+
     return {
-      x: (clientX - rect.left) * (canvas.width / rect.width),
-      y: (clientY - rect.top) * (canvas.height / rect.height),
+      x: (clientX - rect.left) * dpr,
+      y: (clientY - rect.top) * dpr,
     };
   };
+
+  // Draw a stroke (array of points) on canvas context
+  const drawLine = (ctx, stroke) => {
+    if (stroke.length < 2) return;
+    ctx.beginPath();
+    ctx.strokeStyle = stroke[0].color;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.moveTo(stroke[0].x, stroke[0].y);
+    for (let i = 1; i < stroke.length; i++) {
+      ctx.lineTo(stroke[i].x, stroke[i].y);
+    }
+    ctx.stroke();
+  };
+
+  // Redraw all strokes
+  const redrawAll = useCallback(
+    (ctx) => {
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      for (const stroke of strokesRef.current) {
+        drawLine(ctx, stroke);
+      }
+    },
+    []
+  );
 
   // Send message via WebSocket if open
   const sendMessage = (msg) => {
@@ -247,7 +254,6 @@ function App() {
       width: "100%",
       maxWidth: "850px",
       boxSizing: "border-box",
-      overflow: "hidden", // added to prevent overflow
     },
     heading: {
       marginBottom: "15px",
@@ -300,10 +306,7 @@ function App() {
       margin: "0 auto",
       backgroundColor: "#fff",
       touchAction: "none",
-      width: "100%", // fill container width
-      height: "auto", // keep aspect ratio with JS resizing
-      maxWidth: "100%", // prevent overflow
-      boxSizing: "border-box",
+      // width and height set dynamically in JS, no fixed sizes here
     },
   };
 
