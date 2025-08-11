@@ -21,6 +21,13 @@ function App() {
     ctx.stroke();
   };
 
+  const redrawAll = (ctx) => {
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    for (const stroke of strokesRef.current) {
+      drawLine(ctx, stroke);
+    }
+  };
+
   const getPos = (e) => {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
@@ -47,14 +54,6 @@ function App() {
   };
 
   useEffect(() => {
-    // Move redrawAll here to fix missing dependency warning
-    const redrawAll = (ctx) => {
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-      for (const stroke of strokesRef.current) {
-        drawLine(ctx, stroke);
-      }
-    };
-
     socketRef.current = new WebSocket("ws://localhost:8000/ws");
 
     socketRef.current.onopen = () => {
@@ -113,7 +112,7 @@ function App() {
     return () => {
       socketRef.current.close();
     };
-  }, []); // empty deps array is now valid
+  }, []);
 
   const handlePointerDown = (e) => {
     e.preventDefault();
@@ -157,11 +156,7 @@ function App() {
   const handleUndo = () => {
     strokesRef.current.pop();
     const ctx = canvasRef.current.getContext("2d");
-    // redrawAll is inside useEffect, so we need to repeat it here:
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    for (const stroke of strokesRef.current) {
-      drawLine(ctx, stroke);
-    }
+    redrawAll(ctx);
     sendMessage({ type: "undo" });
   };
 
@@ -172,7 +167,7 @@ function App() {
     sendMessage({ type: "clear" });
   };
 
-  // Styles
+  // Styles with responsive fixes
   const styles = {
     container: {
       minHeight: "100vh",
@@ -191,8 +186,9 @@ function App() {
       borderRadius: "12px",
       boxShadow: "0 8px 20px rgba(0,0,0,0.25)",
       padding: "20px",
-      maxWidth: "850px",
-      width: "100%",
+      maxWidth: "100%", // allow full width on small screens
+      width: "850px",   // max width on larger screens
+      boxSizing: "border-box",
     },
     heading: {
       marginBottom: "20px",
@@ -210,8 +206,8 @@ function App() {
       flexWrap: "wrap",
     },
     colorInput: {
-      width: "50px",
-      height: "50px",
+      width: "40px", // smaller on mobile
+      height: "40px",
       borderRadius: "50%",
       border: "3px solid white",
       backgroundColor: "#fff",
@@ -223,7 +219,7 @@ function App() {
       boxSizing: "border-box",
     },
     button: {
-      padding: "12px 25px",
+      padding: "10px 20px", // smaller on mobile
       borderRadius: "8px",
       border: "none",
       cursor: "pointer",
@@ -245,6 +241,9 @@ function App() {
       margin: "0 auto",
       backgroundColor: "#fff",
       touchAction: "none",
+      maxWidth: "100%",  // responsive width
+      height: "auto",    // keep aspect ratio
+      width: "100%",     // full width of container
     },
   };
 
