@@ -1,6 +1,6 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 
-const ASPECT_RATIO = 4 / 3; // Moved outside component for stable reference
+const ASPECT_RATIO = 4 / 3;
 
 function App() {
   const canvasRef = useRef(null);
@@ -12,9 +12,30 @@ function App() {
   const [currentStroke, setCurrentStroke] = useState([]);
   const strokesRef = useRef([]);
 
-  // Resize canvas function: fits container width or window width (mobile),
-  // sets actual canvas pixels and CSS pixels to match (accounting for devicePixelRatio)
-  const resizeCanvas = () => {
+  // Draw a stroke (array of points) on canvas context
+  const drawLine = (ctx, stroke) => {
+    if (stroke.length < 2) return;
+    ctx.beginPath();
+    ctx.strokeStyle = stroke[0].color;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.moveTo(stroke[0].x, stroke[0].y);
+    for (let i = 1; i < stroke.length; i++) {
+      ctx.lineTo(stroke[i].x, stroke[i].y);
+    }
+    ctx.stroke();
+  };
+
+  // Redraw all strokes — wrapped in useCallback for stable reference
+  const redrawAll = useCallback((ctx) => {
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    for (const stroke of strokesRef.current) {
+      drawLine(ctx, stroke);
+    }
+  }, []);
+
+  // Resize canvas function — wrapped in useCallback, depends on redrawAll
+  const resizeCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas) return;
@@ -39,54 +60,9 @@ function App() {
     ctx.scale(dpr, dpr);
 
     redrawAll(ctx);
-  };
+  }, [redrawAll]);
 
-  // Convert mouse/touch event coords to canvas coords, scaled to canvas size
-  const getPos = (e) => {
-    const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    let clientX, clientY;
-
-    if (e.touches) {
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
-    } else {
-      clientX = e.clientX;
-      clientY = e.clientY;
-    }
-
-    return {
-      x: (clientX - rect.left) * (canvas.width / rect.width),
-      y: (clientY - rect.top) * (canvas.height / rect.height),
-    };
-  };
-
-  const drawLine = (ctx, stroke) => {
-    if (stroke.length < 2) return;
-    ctx.beginPath();
-    ctx.strokeStyle = stroke[0].color;
-    ctx.lineWidth = 3;
-    ctx.lineCap = "round";
-    ctx.moveTo(stroke[0].x, stroke[0].y);
-    for (let i = 1; i < stroke.length; i++) {
-      ctx.lineTo(stroke[i].x, stroke[i].y);
-    }
-    ctx.stroke();
-  };
-
-  const redrawAll = (ctx) => {
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    for (const stroke of strokesRef.current) {
-      drawLine(ctx, stroke);
-    }
-  };
-
-  const sendMessage = (msg) => {
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify(msg));
-    }
-  };
-
+  // Setup WebSocket connection and event handlers
   useEffect(() => {
     socketRef.current = new WebSocket("wss://web-production-0f84.up.railway.app/ws");
 
@@ -146,14 +122,36 @@ function App() {
     return () => {
       socketRef.current.close();
     };
-  }, []);
+  }, [redrawAll]);
 
+  // Resize canvas on mount and window resize
   useEffect(() => {
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
     return () => window.removeEventListener("resize", resizeCanvas);
-  }, []); // no need to include ASPECT_RATIO here since it's constant and declared outside
+  }, [resizeCanvas]);
 
+  // Convert mouse/touch event coords to canvas coords, scaled to canvas size
+  const getPos = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    let clientX, clientY;
+
+    if (e.touches) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    }
+
+    return {
+      x: (clientX - rect.left) * (canvas.width / rect.width),
+      y: (clientY - rect.top) * (canvas.height / rect.height),
+    };
+  };
+
+  // Handle drawing start
   const handlePointerDown = (e) => {
     e.preventDefault();
     const pos = getPos(e);
@@ -168,6 +166,7 @@ function App() {
     sendMessage({ type: "start", x: pos.x, y: pos.y, color: currentColor });
   };
 
+  // Handle drawing move
   const handlePointerMove = (e) => {
     if (!drawing) return;
     e.preventDefault();
@@ -184,6 +183,7 @@ function App() {
     });
   };
 
+  // Handle drawing end
   const endDrawing = (e) => {
     if (!drawing) return;
     e.preventDefault();
@@ -193,6 +193,14 @@ function App() {
     setCurrentStroke([]);
   };
 
+  // Send message via WebSocket if open
+  const sendMessage = (msg) => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify(msg));
+    }
+  };
+
+  // Undo last stroke
   const handleUndo = () => {
     strokesRef.current.pop();
     const ctx = canvasRef.current.getContext("2d");
@@ -200,6 +208,7 @@ function App() {
     sendMessage({ type: "undo" });
   };
 
+  // Clear all strokes
   const handleClear = () => {
     strokesRef.current = [];
     const ctx = canvasRef.current.getContext("2d");
@@ -207,31 +216,134 @@ function App() {
     sendMessage({ type: "clear" });
   };
 
-  // Styles object omitted here for brevity — use your existing styles
+  // Styles and UI code remain unchanged...
 
-  // For example purposes, here's the minimal render:
+  const styles = {
+    container: {
+      minHeight: "100vh",
+      background: "linear-gradient(135deg, #667eea 0%, #764ba2 100%)",
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+      color: "#fff",
+      padding: "10px",
+      boxSizing: "border-box",
+    },
+    card: {
+      backgroundColor: "#2c2f4a",
+      borderRadius: "12px",
+      boxShadow: "0 8px 20px rgba(0,0,0,0.25)",
+      padding: "15px",
+      width: "100%",
+      maxWidth: "850px",
+      boxSizing: "border-box",
+    },
+    heading: {
+      marginBottom: "15px",
+      textAlign: "center",
+      fontWeight: "700",
+      fontSize: "1.8rem",
+      letterSpacing: "1.5px",
+      textShadow: "0 2px 5px rgba(0,0,0,0.4)",
+    },
+    controls: {
+      display: "flex",
+      justifyContent: "center",
+      marginBottom: "15px",
+      gap: "12px",
+      flexWrap: "wrap",
+    },
+    colorInput: {
+      width: "40px",
+      height: "40px",
+      borderRadius: "50%",
+      border: "3px solid white",
+      backgroundColor: "#fff",
+      cursor: "pointer",
+      boxShadow: "0 2px 5px rgba(0,0,0,0.3)",
+      padding: 0,
+      appearance: "none",
+      outline: "none",
+      boxSizing: "border-box",
+    },
+    button: {
+      padding: "10px 20px",
+      borderRadius: "8px",
+      border: "none",
+      cursor: "pointer",
+      backgroundColor: "#764ba2",
+      color: "#fff",
+      fontWeight: "600",
+      fontSize: "1rem",
+      boxShadow: "0 4px 10px rgba(0,0,0,0.3)",
+      transition: "background-color 0.3s ease",
+      userSelect: "none",
+    },
+    buttonHover: {
+      backgroundColor: "#667eea",
+    },
+    canvas: {
+      borderRadius: "12px",
+      boxShadow: "0 10px 25px rgba(0,0,0,0.5)",
+      display: "block",
+      margin: "0 auto",
+      backgroundColor: "#fff",
+      touchAction: "none",
+      // width and height set dynamically in JS, no fixed sizes here
+    },
+  };
+
+  const [hoveredButton, setHoveredButton] = useState(null);
+
   return (
-    <div ref={containerRef} style={{ padding: 10 }}>
-      <h2>Collaborative Drawing Lap</h2>
-      <input
-        type="color"
-        value={currentColor}
-        onChange={(e) => setCurrentColor(e.target.value)}
-        title="Select color"
-      />
-      <button onClick={handleUndo}>Undo</button>
-      <button onClick={handleClear}>Clear</button>
-      <canvas
-        ref={canvasRef}
-        onMouseDown={handlePointerDown}
-        onMouseMove={handlePointerMove}
-        onMouseUp={endDrawing}
-        onMouseLeave={endDrawing}
-        onTouchStart={handlePointerDown}
-        onTouchMove={handlePointerMove}
-        onTouchEnd={endDrawing}
-        style={{ border: "1px solid black", borderRadius: 12, display: "block", marginTop: 10 }}
-      />
+    <div style={styles.container} ref={containerRef}>
+      <div style={styles.card}>
+        <h2 style={styles.heading}>Collaborative Drawing Lap</h2>
+        <div style={styles.controls}>
+          <input
+            type="color"
+            value={currentColor}
+            onChange={(e) => setCurrentColor(e.target.value)}
+            style={styles.colorInput}
+            title="Select color"
+          />
+          <button
+            style={{
+              ...styles.button,
+              ...(hoveredButton === "undo" ? styles.buttonHover : {}),
+            }}
+            onMouseEnter={() => setHoveredButton("undo")}
+            onMouseLeave={() => setHoveredButton(null)}
+            onClick={handleUndo}
+          >
+            Undo
+          </button>
+          <button
+            style={{
+              ...styles.button,
+              ...(hoveredButton === "clear" ? styles.buttonHover : {}),
+            }}
+            onMouseEnter={() => setHoveredButton("clear")}
+            onMouseLeave={() => setHoveredButton(null)}
+            onClick={handleClear}
+          >
+            Clear
+          </button>
+        </div>
+        <canvas
+          ref={canvasRef}
+          style={styles.canvas}
+          onMouseDown={handlePointerDown}
+          onMouseMove={handlePointerMove}
+          onMouseUp={endDrawing}
+          onMouseLeave={endDrawing}
+          onTouchStart={handlePointerDown}
+          onTouchMove={handlePointerMove}
+          onTouchEnd={endDrawing}
+        />
+      </div>
     </div>
   );
 }
