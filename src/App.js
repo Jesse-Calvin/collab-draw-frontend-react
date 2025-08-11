@@ -12,32 +12,6 @@ function App() {
   const [isDrawing, setIsDrawing] = useState(false);
   const [undoStack, setUndoStack] = useState([]);
 
-  // Setup WebSocket connection and event handlers
-  useEffect(() => {
-    socketRef.current = new WebSocket(
-      "wss://web-production-0f84.up.railway.app/ws"
-    );
-
-    socketRef.current.onopen = () => {
-      console.log("WebSocket connected");
-    };
-
-    socketRef.current.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      if (message.type === "new_line") {
-        setLines((prevLines) => [...prevLines, message.payload]);
-      }
-    };
-
-    socketRef.current.onclose = () => {
-      console.log("WebSocket disconnected");
-    };
-
-    return () => {
-      socketRef.current.close();
-    };
-  }, []);
-
   // Redraw all lines on the canvas
   const redrawAll = useCallback(
     (ctx) => {
@@ -83,7 +57,7 @@ function App() {
     ctx.scale(dpr, dpr);
 
     redrawAll(ctx);
-  }, [redrawAll, ASPECT_RATIO]);
+  }, [redrawAll]); // <-- ASPECT_RATIO removed here
 
   // On mount and window resize, resize the canvas
   useEffect(() => {
@@ -100,15 +74,60 @@ function App() {
     redrawAll(ctx);
   }, [lines, redrawAll]);
 
-  // Convert event to coordinates relative to canvas top-left
-  // FIX: multiply by devicePixelRatio to fix drawing offset
+  // Setup WebSocket connection and event handlers
+  useEffect(() => {
+    socketRef.current = new WebSocket(
+      "wss://web-production-0f84.up.railway.app/ws"
+    );
+
+    socketRef.current.onopen = () => {
+      console.log("WebSocket connected");
+    };
+
+    socketRef.current.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+        if (message.type === "DRAW") {
+          setLines((prev) => [...prev, message.payload]);
+        } else if (message.type === "UNDO") {
+          setLines((prev) => prev.slice(0, -1));
+        } else if (message.type === "CLEAR") {
+          setLines([]);
+          setUndoStack([]);
+        }
+      } catch (err) {
+        console.error("Error parsing WebSocket message", err);
+      }
+    };
+
+    socketRef.current.onclose = () => {
+      console.log("WebSocket disconnected");
+    };
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.close();
+      }
+    };
+  }, []);
+
+  // Send draw data to WebSocket server
+  const sendDrawData = (line) => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(
+        JSON.stringify({ type: "DRAW", payload: line })
+      );
+    }
+  };
+
+  // Convert event to coordinates relative to canvas top-left (fixes touch offset)
   const getRelativeCoords = (event) => {
     const canvas = canvasRef.current;
     if (!canvas) return { x: 0, y: 0 };
 
     const rect = canvas.getBoundingClientRect();
-
     let clientX, clientY;
+
     if (event.touches && event.touches.length > 0) {
       clientX = event.touches[0].clientX;
       clientY = event.touches[0].clientY;
@@ -117,29 +136,26 @@ function App() {
       clientY = event.clientY;
     }
 
-    const dpr = window.devicePixelRatio || 1;
+    // Calculate scaled coordinates based on actual canvas resolution vs CSS size
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
 
     return {
-      x: (clientX - rect.left) * dpr,
-      y: (clientY - rect.top) * dpr,
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY,
     };
   };
 
-  // Start drawing - add new line and send to WebSocket
+  // Start drawing - add new line and send to WS
   const startDrawing = (event) => {
     const point = getRelativeCoords(event);
     const newLine = { color: currentColor, points: [point] };
     setLines((prev) => [...prev, newLine]);
+    sendDrawData(newLine);
     setIsDrawing(true);
-
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(
-        JSON.stringify({ type: "new_line", payload: newLine })
-      );
-    }
   };
 
-  // Continue drawing - add points to current line and send update to WebSocket
+  // Continue drawing - add points to current line and send updated line
   const draw = (event) => {
     if (!isDrawing) return;
     const point = getRelativeCoords(event);
@@ -148,13 +164,7 @@ function App() {
       const newLines = [...prevLines];
       const lastLine = newLines[newLines.length - 1];
       lastLine.points = [...lastLine.points, point];
-
-      if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-        socketRef.current.send(
-          JSON.stringify({ type: "update_line", payload: lastLine })
-        );
-      }
-
+      sendDrawData(lastLine);
       return newLines;
     });
   };
@@ -164,20 +174,30 @@ function App() {
     setIsDrawing(false);
   };
 
-  // Undo last line drawn
+  // Undo last line drawn and notify WS
   const undo = () => {
     setLines((prev) => {
       if (prev.length === 0) return prev;
       const newUndoStack = [...undoStack, prev[prev.length - 1]];
       setUndoStack(newUndoStack);
+
+      if (
+        socketRef.current &&
+        socketRef.current.readyState === WebSocket.OPEN
+      ) {
+        socketRef.current.send(JSON.stringify({ type: "UNDO" }));
+      }
       return prev.slice(0, -1);
     });
   };
 
-  // Clear all lines
+  // Clear all lines and notify WS
   const clearCanvas = () => {
     setUndoStack([]);
     setLines([]);
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify({ type: "CLEAR" }));
+    }
   };
 
   return (
