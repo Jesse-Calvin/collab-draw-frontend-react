@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 
 function App() {
   const canvasRef = useRef(null);
@@ -10,46 +10,44 @@ function App() {
   const [currentStroke, setCurrentStroke] = useState([]);
   const strokesRef = useRef([]);
 
-  // Aspect ratio 4:3 (width / height)
   const ASPECT_RATIO = 4 / 3;
 
-  // Resize canvas function: fits container width or window width (mobile),
-  // sets actual canvas pixels and CSS pixels to match (accounting for devicePixelRatio)
-  const resizeCanvas = () => {
+  // Memoized redrawAll so it can be a stable dependency
+  const redrawAll = useCallback((ctx) => {
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    for (const stroke of strokesRef.current) {
+      drawLine(ctx, stroke);
+    }
+  }, []);
+
+  // Memoized resizeCanvas to avoid stale closures
+  const resizeCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas) return;
 
-    // Use container width if available; fallback to window width for mobiles
     const containerWidth = container
       ? container.clientWidth
       : window.innerWidth;
 
-    // Calculate height keeping aspect ratio
     const newWidth = containerWidth;
     const newHeight = containerWidth / ASPECT_RATIO;
 
-    // Get devicePixelRatio for sharpness on retina screens
     const dpr = window.devicePixelRatio || 1;
 
-    // Set canvas pixel size (actual drawing buffer)
     canvas.width = newWidth * dpr;
     canvas.height = newHeight * dpr;
 
-    // Set CSS size (what user sees)
     canvas.style.width = `${newWidth}px`;
-    canvas.style.height = `${newHeight}px` ;
+    canvas.style.height = `${newHeight}px`;
 
-    // Scale the drawing context to account for devicePixelRatio
     const ctx = canvas.getContext("2d");
-    ctx.setTransform(1, 0, 0, 1, 0, 0); // reset any transforms
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.scale(dpr, dpr);
 
-    // Redraw all strokes scaled properly
     redrawAll(ctx);
-  };
+  }, [redrawAll]);
 
-  // Convert mouse/touch event coords to canvas coords, scaled to canvas size
   const getPos = (e) => {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
@@ -63,14 +61,12 @@ function App() {
       clientY = e.clientY;
     }
 
-    // Scale to canvas drawing buffer size
     return {
       x: (clientX - rect.left) * (canvas.width / rect.width),
       y: (clientY - rect.top) * (canvas.height / rect.height),
     };
   };
 
-  // Draw a stroke (array of points) on canvas context
   const drawLine = (ctx, stroke) => {
     if (stroke.length < 2) return;
     ctx.beginPath();
@@ -84,24 +80,10 @@ function App() {
     ctx.stroke();
   };
 
-  // Redraw all strokes
-  const redrawAll = (ctx) => {
-    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-    for (const stroke of strokesRef.current) {
-      drawLine(ctx, stroke);
-    }
-  };
-
-  // Send message via WebSocket if open
-  const sendMessage = (msg) => {
-    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
-      socketRef.current.send(JSON.stringify(msg));
-    }
-  };
-
-  // Setup WebSocket connection and event handlers
   useEffect(() => {
-    socketRef.current = new WebSocket("wss://web-production-0f84.up.railway.app/ws");
+    socketRef.current = new WebSocket(
+      "wss://web-production-0f84.up.railway.app/ws"
+    );
 
     socketRef.current.onopen = () => {
       console.log("Connected to WebSocket backend");
@@ -157,18 +139,25 @@ function App() {
     };
 
     return () => {
-      socketRef.current.close();
+      if (socketRef.current) {
+        socketRef.current.close();
+      }
     };
-  }, []);
+  }, [redrawAll]);
 
-  // Resize canvas on mount and on window resize
+  // Add resizeCanvas as dependency to fix ESLint warnings
   useEffect(() => {
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
     return () => window.removeEventListener("resize", resizeCanvas);
-  }, []);
+  }, [resizeCanvas]);
 
-  // Handle drawing start
+  const sendMessage = (msg) => {
+    if (socketRef.current && socketRef.current.readyState === WebSocket.OPEN) {
+      socketRef.current.send(JSON.stringify(msg));
+    }
+  };
+
   const handlePointerDown = (e) => {
     e.preventDefault();
     const pos = getPos(e);
@@ -183,7 +172,6 @@ function App() {
     sendMessage({ type: "start", x: pos.x, y: pos.y, color: currentColor });
   };
 
-  // Handle drawing move
   const handlePointerMove = (e) => {
     if (!drawing) return;
     e.preventDefault();
@@ -200,7 +188,6 @@ function App() {
     });
   };
 
-  // Handle drawing end
   const endDrawing = (e) => {
     if (!drawing) return;
     e.preventDefault();
@@ -210,7 +197,6 @@ function App() {
     setCurrentStroke([]);
   };
 
-  // Undo last stroke
   const handleUndo = () => {
     strokesRef.current.pop();
     const ctx = canvasRef.current.getContext("2d");
@@ -218,7 +204,6 @@ function App() {
     sendMessage({ type: "undo" });
   };
 
-  // Clear all strokes
   const handleClear = () => {
     strokesRef.current = [];
     const ctx = canvasRef.current.getContext("2d");
@@ -226,7 +211,6 @@ function App() {
     sendMessage({ type: "clear" });
   };
 
-  // Styles
   const styles = {
     container: {
       minHeight: "100vh",
@@ -300,7 +284,7 @@ function App() {
       margin: "0 auto",
       backgroundColor: "#fff",
       touchAction: "none",
-      // width and height set dynamically in JS, no fixed sizes here
+      // no fixed width/height here
     },
   };
 
