@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 
 function App() {
   const canvasRef = useRef(null);
@@ -12,47 +12,6 @@ function App() {
 
   // Aspect ratio 4:3 (width / height)
   const ASPECT_RATIO = 4 / 3;
-
-  // Resize canvas function: fits container width or window width (mobile),
-  // sets actual canvas pixels and CSS pixels to match (accounting for devicePixelRatio)
-  const resizeCanvas = () => {
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas) return;
-
-    const containerWidth = container
-      ? container.clientWidth
-      : window.innerWidth;
-
-    const newWidth = containerWidth;
-    const newHeight = containerWidth / ASPECT_RATIO;
-
-    const dpr = window.devicePixelRatio || 1;
-
-    canvas.width = newWidth * dpr;
-    canvas.height = newHeight * dpr;
-
-    canvas.style.width = `${newWidth}px`;
-    canvas.style.height = `${newHeight}px`;
-
-    const ctx = canvas.getContext("2d");
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.scale(dpr, dpr);
-
-    redrawAll(ctx);
-  };
-
-  // Convert pointer event coords to canvas coords, scaled to canvas size & DPR
-  const getPos = (e) => {
-    const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-
-    return {
-      x: (e.clientX - rect.left) * dpr,
-      y: (e.clientY - rect.top) * dpr,
-    };
-  };
 
   // Draw a stroke (array of points) on canvas context
   const drawLine = (ctx, stroke) => {
@@ -68,12 +27,68 @@ function App() {
     ctx.stroke();
   };
 
-  // Redraw all strokes
-  const redrawAll = (ctx) => {
+  // Wrap redrawAll with useCallback to fix eslint deps
+  const redrawAll = useCallback((ctx) => {
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     for (const stroke of strokesRef.current) {
       drawLine(ctx, stroke);
     }
+  }, []);
+
+  // Wrap resizeCanvas with useCallback and include redrawAll as dep
+  const resizeCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas) return;
+
+    // Use container width if available; fallback to window width for mobiles
+    const containerWidth = container
+      ? container.clientWidth
+      : window.innerWidth;
+
+    // Calculate height keeping aspect ratio
+    const newWidth = containerWidth;
+    const newHeight = containerWidth / ASPECT_RATIO;
+
+    // Get devicePixelRatio for sharpness on retina screens
+    const dpr = window.devicePixelRatio || 1;
+
+    // Set canvas pixel size (actual drawing buffer)
+    canvas.width = newWidth * dpr;
+    canvas.height = newHeight * dpr;
+
+    // Set CSS size (what user sees)
+    canvas.style.width = `${newWidth}px`;
+    canvas.style.height = `${newHeight}px`;
+
+    // Scale the drawing context to account for devicePixelRatio
+    const ctx = canvas.getContext("2d");
+    ctx.setTransform(1, 0, 0, 1, 0, 0); // reset any transforms
+    ctx.scale(dpr, dpr);
+
+    // Redraw all strokes scaled properly
+    redrawAll(ctx);
+  }, [redrawAll, ASPECT_RATIO]);
+
+  // Convert mouse/touch event coords to canvas coords, scaled to canvas size
+  const getPos = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    let clientX, clientY;
+
+    if (e.touches) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    }
+
+    // Scale to canvas drawing buffer size
+    return {
+      x: (clientX - rect.left) * (canvas.width / rect.width),
+      y: (clientY - rect.top) * (canvas.height / rect.height),
+    };
   };
 
   // Send message via WebSocket if open
@@ -85,9 +100,7 @@ function App() {
 
   // Setup WebSocket connection and event handlers
   useEffect(() => {
-    socketRef.current = new WebSocket(
-      "wss://web-production-0f84.up.railway.app/ws"
-    );
+    socketRef.current = new WebSocket("wss://web-production-0f84.up.railway.app/ws");
 
     socketRef.current.onopen = () => {
       console.log("Connected to WebSocket backend");
@@ -145,14 +158,14 @@ function App() {
     return () => {
       socketRef.current.close();
     };
-  }, []);
+  }, [redrawAll]);
 
   // Resize canvas on mount and on window resize
   useEffect(() => {
     resizeCanvas();
     window.addEventListener("resize", resizeCanvas);
     return () => window.removeEventListener("resize", resizeCanvas);
-  }, []);
+  }, [resizeCanvas]);
 
   // Handle drawing start
   const handlePointerDown = (e) => {
@@ -225,8 +238,6 @@ function App() {
       color: "#fff",
       padding: "10px",
       boxSizing: "border-box",
-      maxWidth: "100vw",
-      overflowX: "hidden",
     },
     card: {
       backgroundColor: "#2c2f4a",
@@ -236,7 +247,7 @@ function App() {
       width: "100%",
       maxWidth: "850px",
       boxSizing: "border-box",
-      overflowX: "hidden",
+      overflow: "hidden", // added to prevent overflow
     },
     heading: {
       marginBottom: "15px",
@@ -289,9 +300,10 @@ function App() {
       margin: "0 auto",
       backgroundColor: "#fff",
       touchAction: "none",
-      maxWidth: "100%",
-      height: "auto",
-      overflowX: "hidden",
+      width: "100%", // fill container width
+      height: "auto", // keep aspect ratio with JS resizing
+      maxWidth: "100%", // prevent overflow
+      boxSizing: "border-box",
     },
   };
 
@@ -335,10 +347,13 @@ function App() {
         <canvas
           ref={canvasRef}
           style={styles.canvas}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={endDrawing}
-          onPointerCancel={endDrawing}
+          onMouseDown={handlePointerDown}
+          onMouseMove={handlePointerMove}
+          onMouseUp={endDrawing}
+          onMouseLeave={endDrawing}
+          onTouchStart={handlePointerDown}
+          onTouchMove={handlePointerMove}
+          onTouchEnd={endDrawing}
         />
       </div>
     </div>
