@@ -13,6 +13,28 @@ function App() {
   // Aspect ratio 4:3 (width / height)
   const ASPECT_RATIO = 4 / 3;
 
+  // Draw a stroke (array of points) on canvas context
+  const drawLine = (ctx, stroke) => {
+    if (stroke.length < 2) return;
+    ctx.beginPath();
+    ctx.strokeStyle = stroke[0].color;
+    ctx.lineWidth = 3;
+    ctx.lineCap = "round";
+    ctx.moveTo(stroke[0].x, stroke[0].y);
+    for (let i = 1; i < stroke.length; i++) {
+      ctx.lineTo(stroke[i].x, stroke[i].y);
+    }
+    ctx.stroke();
+  };
+
+  // Redraw all strokes
+  const redrawAll = useCallback((ctx) => {
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    for (const stroke of strokesRef.current) {
+      drawLine(ctx, stroke);
+    }
+  }, []);
+
   // Resize canvas function: fits container width or window width (mobile),
   // sets actual canvas pixels and CSS pixels to match (accounting for devicePixelRatio)
   const resizeCanvas = useCallback(() => {
@@ -21,7 +43,9 @@ function App() {
     if (!canvas) return;
 
     // Use container width if available; fallback to window width for mobiles
-    const containerWidth = container ? container.clientWidth : window.innerWidth;
+    const containerWidth = container
+      ? container.clientWidth
+      : window.innerWidth;
 
     // Calculate height keeping aspect ratio
     const newWidth = containerWidth;
@@ -45,16 +69,15 @@ function App() {
 
     // Redraw all strokes scaled properly
     redrawAll(ctx);
-  }, [ASPECT_RATIO]);
+  }, [redrawAll]);
 
-  // Convert mouse/touch event coords to canvas coords, scaled to canvas size & devicePixelRatio
+  // Convert mouse/touch event coords to canvas coords, scaled to canvas size
   const getPos = (e) => {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-
     let clientX, clientY;
 
-    if (e.touches) {
+    if (e.touches && e.touches.length > 0) {
       clientX = e.touches[0].clientX;
       clientY = e.touches[0].clientY;
     } else {
@@ -62,41 +85,15 @@ function App() {
       clientY = e.clientY;
     }
 
-    // Note: rect.width and rect.height are CSS pixels,
-    // canvas.width and canvas.height are device pixels (scaled by dpr)
-    // We want coords relative to canvas pixel space.
-    const dpr = window.devicePixelRatio || 1;
+    // Scale to canvas drawing buffer size (taking devicePixelRatio into account)
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
 
     return {
-      x: (clientX - rect.left) * dpr,
-      y: (clientY - rect.top) * dpr,
+      x: (clientX - rect.left) * scaleX,
+      y: (clientY - rect.top) * scaleY,
     };
   };
-
-  // Draw a stroke (array of points) on canvas context
-  const drawLine = (ctx, stroke) => {
-    if (stroke.length < 2) return;
-    ctx.beginPath();
-    ctx.strokeStyle = stroke[0].color;
-    ctx.lineWidth = 3;
-    ctx.lineCap = "round";
-    ctx.moveTo(stroke[0].x, stroke[0].y);
-    for (let i = 1; i < stroke.length; i++) {
-      ctx.lineTo(stroke[i].x, stroke[i].y);
-    }
-    ctx.stroke();
-  };
-
-  // Redraw all strokes
-  const redrawAll = useCallback(
-    (ctx) => {
-      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
-      for (const stroke of strokesRef.current) {
-        drawLine(ctx, stroke);
-      }
-    },
-    []
-  );
 
   // Send message via WebSocket if open
   const sendMessage = (msg) => {
@@ -107,7 +104,9 @@ function App() {
 
   // Setup WebSocket connection and event handlers
   useEffect(() => {
-    socketRef.current = new WebSocket("wss://web-production-0f84.up.railway.app/ws");
+    socketRef.current = new WebSocket(
+      "wss://web-production-0f84.up.railway.app/ws"
+    );
 
     socketRef.current.onopen = () => {
       console.log("Connected to WebSocket backend");
