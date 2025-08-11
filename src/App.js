@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useCallback } from "react";
 
 function App() {
   const canvasRef = useRef(null);
@@ -21,12 +21,12 @@ function App() {
     ctx.stroke();
   };
 
-  const redrawAll = (ctx) => {
+  const redrawAll = useCallback((ctx) => {
     ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
     for (const stroke of strokesRef.current) {
       drawLine(ctx, stroke);
     }
-  };
+  }, []);
 
   const getPos = (e) => {
     const canvas = canvasRef.current;
@@ -54,7 +54,7 @@ function App() {
   };
 
   useEffect(() => {
-    socketRef.current = new WebSocket("ws://localhost:8000/ws");
+    socketRef.current = new WebSocket("wss://web-production-0f84.up.railway.app/ws");
 
     socketRef.current.onopen = () => {
       console.log("Connected to WebSocket backend");
@@ -112,7 +112,7 @@ function App() {
     return () => {
       socketRef.current.close();
     };
-  }, []);
+  }, [redrawAll]);
 
   const handlePointerDown = (e) => {
     e.preventDefault();
@@ -208,14 +208,11 @@ function App() {
       width: "50px",
       height: "50px",
       borderRadius: "50%",
-      border: "3px solid white",
-      backgroundColor: "#fff",
+      border: "none",
       cursor: "pointer",
       boxShadow: "0 2px 5px rgba(0,0,0,0.3)",
+      backgroundColor: "#fff",
       padding: 0,
-      appearance: "none",
-      outline: "none",
-      boxSizing: "border-box",
     },
     button: {
       padding: "12px 25px",
